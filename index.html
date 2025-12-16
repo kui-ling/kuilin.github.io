@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>抖音高保真路径回溯原型 - 萌宠版 (适配版)</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* --- 全局重置 --- */
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif; -webkit-tap-highlight-color: transparent; }
+        
+        /* 修改：增加背景色层次，让黑色手机外壳更明显 */
+        body { background-color: #0f0f0f; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #fff; overflow: hidden; }
+
+        /* --- 手机外壳 (修改部分) --- */
+        .phone-frame {
+            width: 375px; 
+            height: 812px; 
+            background: #161616; 
+            border-radius: 40px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.8); 
+            position: relative; 
+            overflow: hidden; 
+            border: 8px solid #2a2a2a; /* 稍微提亮边框以便区分背景 */
+            
+            /* --- 核心修改：缩放比例 --- */
+            transform: scale(0.82); 
+            transform-origin: center center;
+            /* 解决缩放后在某些小屏幕可能产生的布局间隙问题 */
+            flex-shrink: 0; 
+        }
+
+        /* --- 通用层级容器 --- */
+        .screen-container { width: 100%; height: 100%; position: relative; background: #000; }
+        .page {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: none; flex-direction: column; overflow: hidden;
+        }
+        .page.active { display: flex; animation: pageEnter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); }
+        @keyframes pageEnter { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        /* 首页不需要滑入动画，避免闪烁 */
+        #page-home.active { animation: none; }
+
+        /* --- 顶部栏 (动态) --- */
+        .top-bar {
+            position: absolute; top: 0; width: 100%; height: 88px; 
+            z-index: 100; padding-top: 44px; display: flex; align-items: center; justify-content: space-between; padding-left: 5px; padding-right: 15px;
+            transition: background 0.2s; pointer-events: none; /* 让点击穿透 */
+        }
+        .top-bar.solid { background: #161616; border-bottom: 1px solid #222; }
+        .top-bar.transparent { background: linear-gradient(to bottom, rgba(0,0,0,0.5), transparent); }
+
+        /* 顶部元素容器 */
+        .top-left { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; pointer-events: auto; }
+        .top-center { flex: 1; display: flex; justify-content: center; align-items: center; height: 100%; pointer-events: auto; padding: 0 10px; }
+        .top-right { width: 44px; height: 44px; display: flex; align-items: center; justify-content: flex-end; pointer-events: auto; }
+
+        /* 返回按钮 */
+        .back-icon { font-size: 24px; color: #fff; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); cursor: pointer; }
+
+        /* 首页 Tabs */
+        .home-tabs { font-size: 17px; font-weight: 600; color: rgba(255,255,255,0.7); display: flex; gap: 15px; text-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+        .home-tabs span.active { color: #fff; position: relative; }
+        .home-tabs span.active::after { content:''; position:absolute; bottom:-6px; left:50%; transform:translateX(-50%); width:20px; height:2px; background:#fff; border-radius:2px; }
+
+        /* 内页搜索框 */
+        .header-search {
+            width: 100%; height: 32px; background: rgba(255,255,255,0.15); border-radius: 4px; 
+            display: none; align-items: center; padding: 0 10px; 
+            font-size: 13px; color: rgba(255,255,255,0.8); backdrop-filter: blur(5px);
+        }
+
+        /* 首页搜索按钮 */
+        .home-search-icon { font-size: 20px; color: rgba(255,255,255,0.95); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3)); cursor: pointer; }
+
+        /* --- 底部导航栏 (仅首页) --- */
+        .bottom-bar {
+            position: absolute; bottom: 0; width: 100%; height: 50px;
+            background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
+            display: flex; justify-content: space-around; align-items: center; z-index: 90;
+            padding-bottom: 10px; pointer-events: auto;
+        }
+        .nav-item { font-size: 16px; font-weight: 600; color: rgba(255,255,255,0.6); cursor: pointer; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+        .nav-item.active { color: #fff; }
+        .add-btn {
+            width: 44px; height: 28px; background: linear-gradient(to right, #24d2ee, #fff, #fe2c55);
+            border-radius: 6px; display: flex; justify-content: center; align-items: center; border: 2px solid rgba(255,255,255,0.8);
+        }
+        .add-icon { color: #161616; font-size: 14px; font-weight: bold; }
+
+        /* --- 页面类型样式 --- */
+        
+        /* 1. 沉浸式视频页 */
+        .video-fs { width: 100%; height: 100%; object-fit: cover; }
+        .v-overlay { position: absolute; top:0; left:0; width:100%; height:100%; pointer-events: none; }
+        
+        /* 右侧交互栏 */
+        .v-side-bar {
+            position: absolute; right: 5px; bottom: 80px; width: 50px;
+            display: flex; flex-direction: column; align-items: center; gap: 20px; pointer-events: auto;
+        }
+        .v-avatar-box { position: relative; margin-bottom: 5px; }
+        .v-avatar { width: 46px; height: 46px; border-radius: 50%; border: 1px solid #fff; object-fit: cover; }
+        .v-follow-plus { 
+            position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
+            width: 18px; height: 18px; background: #fe2c55; border-radius: 50%;
+            display: flex; justify-content: center; align-items: center; font-size: 12px;
+        }
+        .v-action { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+        .v-icon { font-size: 32px; color: #fff; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5)); transition: transform 0.1s; cursor: pointer; }
+        .v-icon:active { transform: scale(0.8); }
+        .v-num { font-size: 12px; font-weight: 500; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+
+        /* 底部信息 */
+        .v-info {
+            position: absolute; bottom: 10px; left: 10px; width: 75%;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.5); pointer-events: auto;
+            /* 移除 padding-bottom，位置由 bottom 控制 */
+        }
+        .v-author { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+        .v-desc { font-size: 14px; line-height: 1.4; margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;}
+        
+        /* 视频内搜索词条 (通用) */
+        .search-capsule {
+            display: inline-flex; align-items: center; height: 24px;
+            background: rgba(0,0,0,0.4); backdrop-filter: blur(4px);
+            padding: 0 8px; border-radius: 4px; font-size: 12px; color: #fff; margin-top: 4px; gap: 4px;
+            cursor: pointer; border: 0.5px solid rgba(255,255,255,0.1);
+        }
+        .search-capsule i { color: #face15; font-size: 12px; }
+        
+        /* [修复] 首页底部搜索推荐条 - 通栏设计 */
+        .home-search-bar-bottom {
+            position: absolute; bottom: 50px; left: 0; width: 100%; height: 36px;
+            background: rgba(0, 0, 0, 0.4); /* 半透明黑色背景 */
+            backdrop-filter: blur(2px);
+            display: flex; align-items: center; padding-left: 15px; pointer-events: auto;
+            z-index: 85; cursor: pointer;
+            border-top: 0.5px solid rgba(255,255,255,0.05);
+        }
+        .hsb-text { font-size: 13px; color: #fff; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+
+        /* 2. 搜索结果页 (黑色背景) */
+        .search-page { background: #161616; padding-top: 90px; }
+        .search-tabs {
+            display: flex; gap: 24px; padding: 0 15px 10px; border-bottom: 1px solid #222;
+            font-size: 14px; color: #999;
+        }
+        .tab-active { color: #fff; font-weight: 600; position: relative; }
+        .tab-active::after { content:''; position:absolute; bottom:-10px; left:50%; transform:translateX(-50%); width:16px; height:2px; background:#face15; }
+        
+        .result-list { padding-top: 10px; overflow-y: auto; height: 100%; }
+        /* 用户卡片 */
+        .user-card { display: flex; align-items: center; padding: 12px 15px; gap: 12px; cursor: pointer; }
+        .uc-avatar { width: 50px; height: 50px; border-radius: 50%; object-fit: cover; }
+        .uc-info h4 { font-size: 15px; margin-bottom: 4px; }
+        .uc-info p { font-size: 11px; color: #999; }
+        /* 视频卡片 */
+        .video-card { display: flex; padding: 8px 15px; gap: 10px; cursor: pointer; }
+        .vc-thumb { width: 140px; height: 190px; border-radius: 4px; object-fit: cover; background: #333; }
+        .vc-info { flex: 1; padding: 4px 0; display: flex; flex-direction: column; justify-content: space-between; }
+        .vc-title { font-size: 14px; line-height: 1.4; max-height: 40px; overflow: hidden; }
+        .vc-meta { font-size: 11px; color: #777; display: flex; align-items: center; gap: 6px; }
+
+        /* 3. 个人主页 */
+        .profile-page { background: #161616; overflow-y: auto; }
+        .profile-cover { height: 140px; background: #333 url('https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800') center/cover; }
+        .profile-content { padding: 0 15px; transform: translateY(-20px); }
+        .p-avatar-lg { width: 86px; height: 86px; border-radius: 50%; border: 3px solid #161616; object-fit: cover; background: #fff; }
+        .p-name-lg { font-size: 20px; font-weight: bold; margin-top: 8px; }
+        .p-id-lg { font-size: 11px; color: #999; margin-bottom: 12px; }
+        .p-data { display: flex; gap: 15px; font-size: 14px; margin-bottom: 15px; }
+        .p-num { font-weight: bold; }
+        .p-label { color: #888; margin-left: 2px; font-size: 12px; }
+        .p-tabs { display: flex; border-bottom: 1px solid #222; margin-bottom: 2px; }
+        .p-tab { flex: 1; text-align: center; padding: 12px 0; color: #999; font-size: 14px; }
+        .p-tab.active { color: #fff; font-weight: 600; border-bottom: 2px solid #face15; }
+        .p-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; }
+        .p-grid-item { aspect-ratio: 3/4; background: #333; position: relative; cursor: pointer; }
+        .p-grid-img { width: 100%; height: 100%; object-fit: cover; }
+        .p-likes { position: absolute; bottom: 4px; left: 4px; font-size: 11px; display: flex; align-items: center; gap: 3px; text-shadow: 0 1px 1px rgba(0,0,0,0.5); }
+
+        /* 4. 评论区 (半屏弹窗) */
+        .comments-sheet {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 70%;
+            background: #161616; border-radius: 12px 12px 0 0; z-index: 200;
+            display: flex; flex-direction: column;
+            transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .comments-sheet.show { transform: translateY(0); }
+        .cmt-header { height: 44px; display: flex; align-items: center; justify-content: center; position: relative; border-bottom: 1px solid #222; font-size: 12px; color: #fff; font-weight: 600; }
+        .cmt-close { position: absolute; right: 15px; font-size: 18px; color: #888; cursor: pointer; }
+        .cmt-list { flex: 1; overflow-y: auto; padding: 10px 15px; }
+        .cmt-item { display: flex; gap: 10px; margin-bottom: 15px; }
+        .cmt-avatar { width: 32px; height: 32px; border-radius: 50%; background: #333; object-fit: cover; }
+        .cmt-content { flex: 1; font-size: 13px; line-height: 1.4; color: #ddd; }
+        .cmt-user { color: #888; font-size: 11px; margin-bottom: 2px; }
+        .cmt-search-bar {
+            margin-top: 8px; font-size: 12px; color: #face15; font-weight: 500; cursor: pointer;
+        }
+
+        /* --- 长按回溯菜单 --- */
+        .trace-menu {
+            position: absolute; top: 50px; left: 10px; width: 260px;
+            background: rgba(22, 22, 22, 0.95); backdrop-filter: blur(20px);
+            border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);
+            padding: 10px; box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+            z-index: 300; display: none; flex-direction: column; gap: 8px;
+            transform-origin: top left; animation: popIn 0.2s ease-out;
+        }
+        @keyframes popIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        
+        .trace-header { font-size: 10px; color: #666; padding-left: 4px; margin-bottom: 2px; }
+        .trace-item {
+            display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px;
+            background: rgba(255,255,255,0.05); cursor: pointer; position: relative;
+        }
+        .trace-item:active { background: rgba(255,255,255,0.15); }
+        .trace-line { position: absolute; left: 24px; top: -14px; width: 1px; height: 16px; background: #444; z-index: -1; }
+        .trace-item:first-of-type .trace-line { display: none; }
+        
+        .t-thumb { width: 32px; height: 42px; background: #333; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+        .t-icon-box { width: 32px; height: 42px; background: #333; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #999; flex-shrink: 0; }
+        .t-info { overflow: hidden; }
+        .t-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .t-source { font-size: 10px; padding: 1px 4px; border-radius: 3px; display: inline-block; }
+        
+        .tag-default { color: #888; background: rgba(255,255,255,0.1); }
+        .tag-search { color: #face15; background: rgba(250, 206, 21, 0.1); }
+        .tag-profile { color: #fe2c55; background: rgba(254, 44, 85, 0.1); }
+
+        /* 引导提示 */
+        .guide-toast {
+            position: absolute; top: 120px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.8); color: #fff; padding: 10px 20px; border-radius: 20px;
+            font-size: 13px; pointer-events: none; z-index: 400; display: none; text-align: center;
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="phone-frame">
+    <!-- 顶部状态栏 -->
+    <div class="top-bar transparent" id="topBar">
+        <div class="top-left" id="backBtn">
+            <i class="fas fa-chevron-left back-icon"></i>
+        </div>
+        <div class="top-center">
+            <!-- 首页 Tabs -->
+            <div class="home-tabs" id="homeTabs">
+                <span>商城</span>
+                <span class="active">推荐</span>
+                <span>关注</span>
+            </div>
+            <!-- 内页搜索框 -->
+            <div class="header-search" id="headerSearchBox">
+                <i class="fas fa-search" style="margin-right: 6px;"></i> <span id="headerSearchText">搜索</span>
+            </div>
+        </div>
+        <div class="top-right">
+            <!-- 首页搜索按钮 -->
+            <i class="fas fa-search home-search-icon" id="homeSearchBtn" onclick="forward('page-search-1')"></i>
+        </div>
+    </div>
+
+    <!-- 引导提示 -->
+    <div class="guide-toast" id="guideToast">您已处于第7层页面<br>长按左上角返回键回溯</div>
+
+    <div class="screen-container">
+        
+        <!-- ================== 页面堆栈 ================== -->
+
+        <!-- Layer 8: 最终搜索页 (评论区点的) -->
+        <div class="page active search-page" id="page-final-search">
+            <div class="search-tabs">
+                <span class="tab-active">综合</span><span>视频</span><span>用户</span><span>商品</span>
+            </div>
+            <div class="result-list">
+                <div class="video-card">
+                    <img src="https://images.unsplash.com/photo-1591946614720-90a587da4a36?w=200" class="vc-thumb">
+                    <div class="vc-info">
+                        <div class="vc-title">金毛狗狗的日常护理指南，新手必看！太实用了</div>
+                        <div class="vc-meta"><div style="width:16px;height:16px;background:#fff;border-radius:50%;margin-right:4px;"></div> 宠物医生老王 · 5.2w赞</div>
+                    </div>
+                </div>
+                <div class="video-card">
+                    <img src="https://images.unsplash.com/photo-1552053831-71594a27632d?w=200" class="vc-thumb">
+                    <div class="vc-info">
+                        <div class="vc-title">如何给金毛洗澡？不想去宠物店的看过来</div>
+                        <div class="vc-meta"><div style="width:16px;height:16px;background:#fff;border-radius:50%;margin-right:4px;"></div> 萌宠日记 · 1.2w赞</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Layer 6: 视频详情 2 (搜索出的金毛视频) -->
+        <div class="page" id="page-video-2">
+            <img src="https://images.unsplash.com/photo-1633722715463-d30f4f325e24?w=500" class="video-fs">
+            <div class="v-side-bar">
+                <div class="v-avatar-box">
+                    <img src="https://images.unsplash.com/photo-1517849845537-4d257902454a?w=100" class="v-avatar">
+                    <div class="v-follow-plus"><i class="fas fa-plus"></i></div>
+                </div>
+                <div class="v-action"><i class="fas fa-heart v-icon"></i><span class="v-num">3.5w</span></div>
+                <div class="v-action" onclick="openComments()"><i class="fas fa-comment-dots v-icon"></i><span class="v-num">1024</span></div>
+                <div class="v-action"><i class="fas fa-star v-icon"></i><span class="v-num">520</span></div>
+                <div class="v-action"><i class="fas fa-share v-icon"></i><span class="v-num">Share</span></div>
+            </div>
+            <div class="v-info">
+                <div class="v-author">@金毛大黄</div>
+                <div class="v-desc">这谁顶得住啊！太治愈了~ #金毛 #萌宠</div>
+            </div>
+
+            <!-- 内嵌的评论区 -->
+            <div class="comments-sheet show" id="comments-sheet-layer">
+                <div class="cmt-header">
+                    1024 条评论
+                    <i class="fas fa-times cmt-close" onclick="closeComments()"></i>
+                </div>
+                <div class="cmt-list">
+                    <div class="cmt-item">
+                        <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100" class="cmt-avatar">
+                        <div class="cmt-content">
+                            <div class="cmt-user">爱吃鱼的猫</div>
+                            <div>这只狗狗太乖了吧！想养一只金毛。</div>
+                            <div class="cmt-search-bar" onclick="forward('page-final-search')">
+                                <i class="fas fa-search"></i> 大家都在搜：金毛护理注意事项
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cmt-item">
+                        <img src="https://images.unsplash.com/photo-1527980965255-d3b416303d12?w=100" class="cmt-avatar">
+                        <div class="cmt-content">
+                            <div class="cmt-user">路人甲</div>
+                            <div>小时候真的很可爱，长大了就是拆迁队哈哈哈哈。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Layer 5: 搜索页 2 -->
+        <div class="page search-page" id="page-search-2">
+            <div class="search-tabs"><span class="tab-active">综合</span><span>视频</span></div>
+            <div class="result-list">
+                <div class="video-card" onclick="forward('page-video-2')">
+                    <img src="https://images.unsplash.com/photo-1633722715463-d30f4f325e24?w=200" class="vc-thumb">
+                    <div class="vc-info">
+                        <div class="vc-title">金毛幼崽的迷惑行为大赏，看完心都化了</div>
+                        <div class="vc-meta">金毛大黄 · 刚刚</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Layer 4: 视频详情 1 -->
+        <div class="page" id="page-video-1">
+            <img src="https://images.unsplash.com/photo-1591871937573-74dbba515c4c?w=500" class="video-fs">
+            <div class="v-side-bar">
+                <div class="v-avatar-box">
+                    <img src="https://images.unsplash.com/photo-1517849845537-4d257902454a?w=100" class="v-avatar">
+                    <div class="v-follow-plus" style="display:none;"><i class="fas fa-check"></i></div>
+                </div>
+                <div class="v-action"><i class="fas fa-heart v-icon" style="color:#fe2c55"></i><span class="v-num">12w</span></div>
+                <div class="v-action"><i class="fas fa-comment-dots v-icon"></i><span class="v-num">3.2w</span></div>
+                <div class="v-action"><i class="fas fa-star v-icon"></i><span class="v-num">8k</span></div>
+                <div class="v-action"><i class="fas fa-share v-icon"></i><span class="v-num">5k</span></div>
+            </div>
+            <div class="v-info">
+                <div class="v-author">@萌宠集合站</div>
+                <div class="v-desc">猫猫狗狗一起长大是什么体验？</div>
+                <div class="search-capsule" onclick="forward('page-search-2')">
+                    <i class="fas fa-search"></i> 金毛
+                </div>
+            </div>
+        </div>
+
+        <!-- Layer 3: 个人主页 -->
+        <div class="page profile-page" id="page-profile">
+            <div class="profile-cover"></div>
+            <div class="profile-content">
+                <img src="https://images.unsplash.com/photo-1517849845537-4d257902454a?w=100" class="p-avatar-lg">
+                <div class="p-name-lg">萌宠集合站</div>
+                <div class="p-id-lg">抖音号: cute_pets_666</div>
+                <div class="p-data">
+                    <div><span class="p-num">256w</span><span class="p-label">获赞</span></div>
+                    <div><span class="p-num">12</span><span class="p-label">关注</span></div>
+                    <div><span class="p-num">38.5w</span><span class="p-label">粉丝</span></div>
+                </div>
+                <div class="p-tabs">
+                    <div class="p-tab active">作品 241</div>
+                    <div class="p-tab">喜欢 1.2k</div>
+                </div>
+                <div class="p-grid">
+                    <div class="p-grid-item" onclick="forward('page-video-1')">
+                        <img src="https://images.unsplash.com/photo-1591871937573-74dbba515c4c?w=200" class="p-grid-img">
+                        <div class="p-likes"><i class="far fa-heart"></i> 12w</div>
+                    </div>
+                    <div class="p-grid-item"><img src="https://images.unsplash.com/photo-1583511655857-d19b40a7a54e?w=200" class="p-grid-img"></div>
+                    <div class="p-grid-item"><img src="https://images.unsplash.com/photo-1587300003388-59208cc962cb?w=200" class="p-grid-img"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Layer 2: 搜索页 1 -->
+        <div class="page search-page" id="page-search-1">
+            <div class="search-tabs"><span class="tab-active">综合</span><span>用户</span></div>
+            <div class="result-list">
+                <div class="user-card" onclick="forward('page-profile')">
+                    <img src="https://images.unsplash.com/photo-1517849845537-4d257902454a?w=100" class="uc-avatar">
+                    <div class="uc-info">
+                        <h4>萌宠集合站</h4>
+                        <p>粉丝 38.5w · 每天更新可爱小动物</p>
+                    </div>
+                    <div style="background:#fe2c55;color:#fff;font-size:12px;padding:6px 16px;border-radius:4px;">关注</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Layer 1: 首页 -->
+        <div class="page" id="page-home">
+            <img src="https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=500" class="video-fs">
+            <div class="v-side-bar" style="bottom: 60px;">
+                <div class="v-avatar-box"><img src="https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100" class="v-avatar"><div class="v-follow-plus"><i class="fas fa-plus"></i></div></div>
+                <div class="v-action"><i class="fas fa-heart v-icon"></i><span class="v-num">8.2w</span></div>
+                <div class="v-action"><i class="fas fa-comment-dots v-icon"></i><span class="v-num">1.1k</span></div>
+                <div class="v-action"><i class="fas fa-star v-icon"></i><span class="v-num">4.5k</span></div>
+                <div class="v-action"><i class="fas fa-share v-icon"></i><span class="v-num">2.3k</span></div>
+            </div>
+            
+            <!-- 这里的 v-info bottom 调高了，避开底部的通栏搜索条 -->
+            <div class="v-info" style="bottom: 90px;">
+                <div class="v-author">@猫咪日记</div>
+                <div class="v-desc">今天的小猫咪格外粘人~ <span style="color:#face15">#萌宠 #猫咪</span></div>
+            </div>
+
+            <!-- 通栏的底部相关搜索条，放在这里，宽度100% -->
+            <div class="home-search-bar-bottom" onclick="forward('page-search-1')">
+                <div class="hsb-text"><i class="fas fa-search" style="color:#face15;"></i> 找相关：萌宠集合站</div>
+            </div>
+            
+            <!-- 底部导航 (仅首页) -->
+            <div class="bottom-bar">
+                <div class="nav-item active">首页</div>
+                <div class="nav-item">朋友</div>
+                <div class="add-btn"><i class="fas fa-plus add-icon"></i></div>
+                <div class="nav-item">消息</div>
+                <div class="nav-item">我</div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- 回溯菜单 -->
+    <div class="trace-menu" id="traceMenu"></div>
+
+</div>
+
+<script>
+    // 页面配置
+    const pages = {
+        'page-home': { title: '推荐首页', thumb: 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=100', type: 'video', source: '启动' },
+        'page-search-1': { title: '搜索：萌宠集合站', icon: 'fas fa-search', type: 'icon', source: '底部相关搜索' },
+        'page-profile': { title: '主页：萌宠集合站', thumb: 'https://images.unsplash.com/photo-1517849845537-4d257902454a?w=100', type: 'avatar', source: '点击卡片' },
+        'page-video-1': { title: '视频：猫狗一起长大...', thumb: 'https://images.unsplash.com/photo-1591871937573-74dbba515c4c?w=100', type: 'video', source: '主页列表' },
+        'page-search-2': { title: '搜索：金毛', icon: 'fas fa-search', type: 'icon', source: '视频词条' },
+        'page-video-2': { title: '视频：金毛大黄', thumb: 'https://images.unsplash.com/photo-1633722715463-d30f4f325e24?w=100', type: 'video', source: '搜索结果' },
+        'page-final-search': { title: '搜索：金毛护理', icon: 'fas fa-search', type: 'icon', source: '评论区大家搜' }
+    };
+
+    // 初始堆栈
+    let stack = [
+        'page-home',
+        'page-search-1',
+        'page-profile',
+        'page-video-1',
+        'page-search-2',
+        'page-video-2',
+        'page-final-search'
+    ];
+
+    // DOM
+    const backBtn = document.getElementById('backBtn');
+    const menu = document.getElementById('traceMenu');
+    const topBar = document.getElementById('topBar');
+    const homeTabs = document.getElementById('homeTabs');
+    const headerSearchBox = document.getElementById('headerSearchBox');
+    const headerSearchText = document.getElementById('headerSearchText');
+    const homeSearchBtn = document.getElementById('homeSearchBtn');
+    const guideToast = document.getElementById('guideToast');
+
+    // 前进
+    window.forward = function(id) {
+        stack.push(id);
+        updateUI();
+    }
+
+    // 回溯
+    window.traceBack = function(id) {
+        const idx = stack.indexOf(id);
+        if (idx !== -1) {
+            stack = stack.slice(0, idx + 1);
+            updateUI();
+        }
+        menu.style.display = 'none';
+    }
+
+    // 返回
+    function goBack() {
+        if (stack.length > 1) {
+            stack.pop();
+            updateUI();
+        }
+    }
+
+    // 评论区控制
+    window.openComments = function() {
+        document.getElementById('comments-sheet-layer').classList.add('show');
+    }
+    window.closeComments = function() {
+        document.getElementById('comments-sheet-layer').classList.remove('show');
+        event.stopPropagation();
+    }
+
+    // UI 更新
+    function updateUI() {
+        const currentId = stack[stack.length - 1];
+        
+        // 页面显隐
+        document.querySelectorAll('.page, .comments-sheet').forEach(el => el.classList.remove('active', 'show'));
+        
+        const el = document.getElementById(currentId);
+        if (el.classList.contains('comments-sheet')) {
+            document.getElementById('page-video-2').classList.add('active');
+            el.classList.add('show');
+        } else {
+            el.classList.add('active');
+        }
+
+        // 顶部栏逻辑
+        if (currentId === 'page-home') {
+            // 首页状态
+            backBtn.style.visibility = 'hidden'; // 隐藏返回
+            homeTabs.style.display = 'flex';     // 显示Tab
+            headerSearchBox.style.display = 'none'; // 隐藏内页搜索
+            homeSearchBtn.style.display = 'block'; // 显示首页搜索图标
+            topBar.className = 'top-bar transparent';
+        } else {
+            // 内页状态
+            backBtn.style.visibility = 'visible';
+            homeTabs.style.display = 'none';
+            headerSearchBox.style.display = 'flex';
+            homeSearchBtn.style.display = 'none';
+            
+            // 搜索页实心背景，视频/主页透明背景
+            if (currentId.includes('search')) {
+                topBar.className = 'top-bar solid';
+                headerSearchText.innerText = pages[currentId].title.split('：')[1];
+            } else {
+                topBar.className = 'top-bar transparent';
+                // 视频页隐藏搜索框，显示空状态或标题（此处简单隐藏）
+                if(currentId.includes('video') || currentId.includes('profile')) {
+                     headerSearchBox.style.display = 'none';
+                }
+            }
+        }
+    }
+
+    // 长按逻辑
+    let timer;
+    let isLong = false;
+
+    backBtn.addEventListener('mousedown', start);
+    backBtn.addEventListener('touchstart', start);
+    backBtn.addEventListener('mouseup', end);
+    backBtn.addEventListener('touchend', end);
+
+    function start(e) {
+        if(e.cancelable) e.preventDefault();
+        isLong = false;
+        timer = setTimeout(() => {
+            isLong = true;
+            showMenu();
+            guideToast.style.display = 'none';
+        }, 400);
+    }
+
+    function end() {
+        clearTimeout(timer);
+        if (!isLong) {
+            if (menu.style.display === 'flex') menu.style.display = 'none';
+            else goBack();
+        }
+    }
+
+    function showMenu() {
+        if (navigator.vibrate) navigator.vibrate(50);
+        
+        let html = `<div class="trace-header">长按路径回溯</div>`;
+        for (let i = stack.length - 2; i >= 0; i--) {
+            const pid = stack[i];
+            const data = pages[pid];
+            
+            let thumb = '';
+            if (data.type === 'icon') thumb = `<div class="t-icon-box"><i class="${data.icon}"></i></div>`;
+            else {
+                let r = data.type === 'avatar' ? '50%' : '4px';
+                thumb = `<img src="${data.thumb}" class="t-thumb" style="border-radius:${r}">`;
+            }
+
+            let tagClass = 'tag-default';
+            if (data.source.includes('搜')) tagClass = 'tag-search';
+            if (data.source.includes('主页')) tagClass = 'tag-profile';
+
+            html += `
+                <div class="trace-item" onclick="traceBack('${pid}')">
+                    <div class="trace-line"></div>
+                    ${thumb}
+                    <div class="t-info">
+                        <div class="t-title">${data.title}</div>
+                        <div class="t-source ${tagClass}">${data.source}</div>
+                    </div>
+                </div>
+            `;
+        }
+        menu.innerHTML = html;
+        menu.style.display = 'flex';
+    }
+
+    setTimeout(() => {
+        guideToast.style.display = 'block';
+        setTimeout(() => guideToast.style.display = 'none', 4000);
+    }, 500);
+
+    document.querySelector('.screen-container').addEventListener('click', () => {
+        menu.style.display = 'none';
+    });
+
+    updateUI();
+
+</script>
+
+</body>
+</html>
