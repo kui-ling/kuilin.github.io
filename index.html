@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>抖音高保真路径回溯原型 - 萌宠版 (适配版)</title>
+    <title>抖音高保真路径回溯原型</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         /* --- 全局重置 --- */
@@ -23,9 +23,12 @@
             overflow: hidden; 
             border: 8px solid #2a2a2a; /* 稍微提亮边框以便区分背景 */
             
-            /* --- 核心修改：缩放比例 --- */
-            transform: scale(0.82); 
+            /* --- 核心修改：缩放比例与位置修正 --- */
+            /* 1. scale(0.78): 按照您的要求调整缩放比例 */
+            /* 2. translateY(-100px): 大幅向上偏移，确保底部可见 */
+            transform: scale(0.78) translateY(-100px); 
             transform-origin: center center;
+            
             /* 解决缩放后在某些小屏幕可能产生的布局间隙问题 */
             flex-shrink: 0; 
         }
